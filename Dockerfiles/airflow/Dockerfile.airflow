@@ -1,0 +1,48 @@
+# Use the Bitnami Airflow image as the base image
+FROM bitnami/airflow:latest
+
+# Set environment variables for Spark
+ENV SPARK_HOME=/usr/local/spark
+ENV PATH="${PATH}:${SPARK_HOME}/bin"
+ENV SPARK_OPTS="--driver-java-options=-Xms1024M --driver-java-options=-Xmx4096M --driver-java-options=-Dlog4j.logLevel=info"
+
+# Install Java and other dependencies
+USER root
+
+# Default values can be overridden at build time
+ARG openjdk_version="17"
+
+RUN apt-get update --yes && \
+    apt-get install --yes --no-install-recommends \
+    "openjdk-${openjdk_version}-jre-headless" \
+    ca-certificates-java \
+    wget && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Install Spark
+ARG spark_version="3.5.0"
+ARG hadoop_version="3"
+ARG scala_version="2.12"
+# Use Apache archive URL instead of dlcdn
+ARG spark_download_url="https://archive.apache.org/dist/spark/"
+
+# Download and install Spark
+RUN set -ex && \
+    mkdir -p /tmp/spark && \
+    cd /tmp/spark && \
+    # Add error checking for download
+    wget -q --retry-connrefused --waitretry=1 --read-timeout=20 --timeout=15 -t 3 \
+        "${spark_download_url}spark-${spark_version}/spark-${spark_version}-bin-hadoop${hadoop_version}.tgz" && \
+    # Verify the download was successful
+    [ -f "spark-${spark_version}-bin-hadoop${hadoop_version}.tgz" ] && \
+    tar xzf "spark-${spark_version}-bin-hadoop${hadoop_version}.tgz" -C /usr/local --owner root --group root --no-same-owner && \
+    rm -rf /tmp/spark && \
+    ln -s "/usr/local/spark-${spark_version}-bin-hadoop${hadoop_version}" "${SPARK_HOME}"
+
+# Install Python dependencies
+RUN pip install --no-cache-dir pyspark==${spark_version} pyarrow pandas==2.2.2 delta-spark==3.2.0
+
+USER 1001
+
+# Expose the Spark UI port
+EXPOSE 4040

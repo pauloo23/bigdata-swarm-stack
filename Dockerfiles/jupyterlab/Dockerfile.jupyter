@@ -1,0 +1,18 @@
+FROM jupyter/pyspark-notebook:spark-3.5.0
+
+# Install delta-spark
+RUN pip install delta-spark==3.2.0
+
+# Install Jupyter Lab extensions
+RUN jupyter labextension install @jupyter-widgets/jupyterlab-manager \
+    @jupyterlab/toc \
+    @krassowski/jupyterlab-lsp \
+    @jupyterlab/git \
+    @jupyterlab/debugger \
+    @jupyterlab/plotly-extension
+
+# Install Jupyter Lab Language Server Protocol (LSP) for IntelliSense
+RUN pip install jupyterlab-lsp 'python-lsp-server[all]'
+
+# Enable Jupyter Lab extensions
+RUN jupyter lab build

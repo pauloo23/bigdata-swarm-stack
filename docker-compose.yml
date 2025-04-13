@@ -1,0 +1,452 @@
+version: '3.8'
+
+services:
+  minio:
+    hostname: minio
+    image: minio/minio:latest
+    command: server --console-address ":9001" /data
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    networks:
+      - big_data_network
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+
+  s3vol:
+    image: elementar/s3-volume
+    command: ["--force-restore", "s3://dags", "/data",]
+    environment:
+      - BACKUP_INTERVAL=2m
+      - AWS_ACCESS_KEY_ID=minioadmin
+      - AWS_SECRET_ACCESS_KEY=minioadmin
+      - ENDPOINT_URL=http://minio:9000
+    volumes:
+      - s3data:/data
+    networks:
+      - big_data_network
+    depends_on:
+      - minio
+      - createdagsbucket
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+
+  createspoolingbucket:
+    hostname: createspoolingbucket
+    image: minio/minio:latest
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      /usr/bin/mc alias set myminio http://minio:9000 minioadmin minioadmin;
+      /usr/bin/mc mb myminio/spooling;
+      /usr/bin/mc anonymous set public myminio/spooling;
+      "
+    networks:
+      - big_data_network
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+
+  createbucket:
+    hostname: createbucket
+    image: minio/minio:latest
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      /usr/bin/mc alias set myminio http://minio:9000 minioadmin minioadmin;
+      /usr/bin/mc mb myminio/data;
+      /usr/bin/mc anonymous set public myminio/data;
+      "
+    networks:
+      - big_data_network
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+
+  createdagsbucket:
+    image: minio/minio:latest
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      /usr/bin/mc alias set myminio http://minio:9000 minioadmin minioadmin;
+      /usr/bin/mc mb myminio/dags;
+      /usr/bin/mc anonymous set public myminio/dags;
+      "
+    networks:
+      - big_data_network
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+
+  spark-master:
+    image: bitnami/spark:3.5.0
+    ports:
+      - "8080:8080"
+      - "7077:7077"
+      - "4040:4040"
+    environment:
+      - SPARK_MODE=master
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+      - SPARK_SSL_ENABLED=no
+    volumes:
+      - ./configs/spark/spark-defaults.conf:/opt/bitnami/spark/conf/spark-defaults.conf
+      - ./Dockerfiles/hive-metastore/conf/hive-site.xml:/opt/bitnami/spark/conf/hive-site.xml
+    networks:
+      - big_data_network
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+
+
+  spark-worker:
+    image: bitnami/spark:3.5.0
+    hostname: "{{.Node.Hostname}}-{{.Node.ID}}-{{.Service.Name}}"
+    ports:
+      - "8081:8081" 
+      - "8082:8082"
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_WORKER_MEMORY=2G
+      - SPARK_WORKER_CORES=2
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+      - SPARK_SSL_ENABLED=no
+    networks:
+      - big_data_network
+    deploy:
+      mode: replicated
+      replicas: 2
+      placement:
+        constraints:
+          - node.role != manager
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  jupyter:
+    image: 127.0.0.1:5001/custom-jupyter:latest
+    hostname: jupyter
+    ports:
+      - "8888:8888"
+    environment:
+      - JUPYTER_ENABLE_LAB=yes
+      - SPARK_MASTER=spark://spark-master:7077
+      - PYSPARK_PYTHON=/usr/bin/python3
+      - PYSPARK_DRIVER_PYTHON=/usr/bin/python3
+      - AWS_ACCESS_KEY_ID=minioadmin
+      - AWS_SECRET_ACCESS_KEY=minioadmin
+      - AWS_ENDPOINT_URL=http://minio-ingress:9000
+    volumes:
+      - ./notebooks:/home/jovyan/work
+    depends_on:
+      - spark-master
+      - minio
+    networks:
+      - big_data_network
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+
+  airflow-scheduler:
+    image: 127.0.0.1:5001/custom-airflow:latest
+    environment:
+      - AIRFLOW_COMPONENT_TYPE=scheduler
+      - AIRFLOW_DATABASE_HOST=airflow-postgresql
+      - AIRFLOW_DATABASE_PORT_NUMBER=5431
+      - AIRFLOW_DATABASE_NAME=bitnami_airflow
+      - AIRFLOW_DATABASE_USERNAME=bn_airflow
+      - AIRFLOW_DATABASE_PASSWORD=bitnami1
+      - AIRFLOW_EXECUTOR=CeleryExecutor
+      - AIRFLOW_WEBSERVER_HOST=airflow-webserver
+      - REDIS_HOST=airflow-redis
+      - REDIS_PORT_NUMBER=6379
+      - AIRFLOW_LOAD_EXAMPLES=yes
+      - AIRFLOW_USERNAME=user
+      - AIRFLOW_PASSWORD=bitnami
+      - AWS_ENDPOINT_URL=http://minio-ingress:9000
+    volumes:
+      - airflow_scheduler_data:/bitnami
+      - s3data:/opt/bitnami/airflow/dags
+    networks:
+      - big_data_network
+    depends_on:
+      - airflow-postgresql
+      - airflow-redis
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+
+  airflow-webserver:
+    image: 127.0.0.1:5001/custom-airflow:latest
+    ports:
+      - "8090:8080"
+    environment:
+      - AIRFLOW_COMPONENT_TYPE=webserver
+      - AIRFLOW_DATABASE_HOST=airflow-postgresql
+      - AIRFLOW_DATABASE_PORT_NUMBER=5431
+      - AIRFLOW_DATABASE_NAME=bitnami_airflow
+      - AIRFLOW_DATABASE_USERNAME=bn_airflow
+      - AIRFLOW_DATABASE_PASSWORD=bitnami1
+      - AIRFLOW_EXECUTOR=CeleryExecutor
+      - REDIS_HOST=airflow-redis
+      - REDIS_PORT_NUMBER=6379
+      - AIRFLOW_LOAD_EXAMPLES=yes
+      - AIRFLOW_USERNAME=user
+      - AIRFLOW_PASSWORD=bitnami
+      - AWS_ENDPOINT_URL=http://minio-ingress:9000
+    volumes:
+      - airflow_webserver_data:/bitnami
+      - s3data:/opt/bitnami/airflow/dags
+    networks:
+      - big_data_network
+    depends_on:
+      - airflow-postgresql
+      - airflow-redis
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+
+  airflow-worker:
+    image: 127.0.0.1:5001/custom-airflow:latest
+    hostname: "{{.Node.Hostname}}-{{.Node.ID}}-{{.Service.Name}}"
+    environment:
+      - AIRFLOW_COMPONENT_TYPE=worker
+      - AIRFLOW_DATABASE_HOST=airflow-postgresql
+      - AIRFLOW_DATABASE_PORT_NUMBER=5431
+      - AIRFLOW_DATABASE_NAME=bitnami_airflow
+      - AIRFLOW_DATABASE_USERNAME=bn_airflow
+      - AIRFLOW_DATABASE_PASSWORD=bitnami1
+      - AIRFLOW_EXECUTOR=CeleryExecutor
+      - AIRFLOW_WEBSERVER_HOST=airflow-webserver
+      - REDIS_HOST=airflow-redis
+      - REDIS_PORT_NUMBER=6379
+      - AIRFLOW_LOAD_EXAMPLES=yes
+      - AIRFLOW_USERNAME=user
+      - AIRFLOW_PASSWORD=bitnami
+      - AWS_ENDPOINT_URL=http://minio-ingress:9000
+    volumes:
+      - airflow_worker_data:/bitnami
+      - s3data:/opt/bitnami/airflow/dags
+    networks:
+      - big_data_network
+    depends_on:
+      - airflow-postgresql
+      - airflow-redis
+    deploy:
+      mode: replicated
+      replicas: 2
+      placement:
+        constraints:
+          - node.role != manager
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  airflow-postgresql:
+    image: bitnami/postgresql:latest
+    environment:
+      - POSTGRESQL_PORT_NUMBER=5431
+      - POSTGRESQL_DATABASE=bitnami_airflow
+      - POSTGRESQL_USERNAME=bn_airflow
+      - POSTGRESQL_PASSWORD=bitnami1
+    volumes:
+      - postgresql_data:/bitnami/postgresql
+    networks:
+      - big_data_network
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+
+
+  airflow-redis:
+    image: bitnami/redis:latest
+    environment:
+      - ALLOW_EMPTY_PASSWORD=yes
+    networks:
+      - big_data_network
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+
+
+  postgres:
+    image: postgres:10-alpine
+    hostname: postgres
+    environment:
+      - POSTGRES_USER=hive
+      - POSTGRES_PASSWORD=hive123
+      - POSTGRES_DB=metastore_db
+    volumes:
+      - hive_metastore_db:/var/lib/postgresql/data
+    networks:
+      - big_data_network
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+
+
+  hive-metastore:
+    hostname: hive-metastore
+    image: 127.0.0.1:5001/custom-hive-metastore:latest
+    ports:
+      - 9083:9083
+    depends_on:
+      - postgres
+    networks:
+      - big_data_network
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+
+  trino-coordinator:
+    hostname: trino-coordinator
+    ports:
+      - 9090:9090
+    image: trinodb/trino:474
+    volumes:
+      - ./configs/trino/coordinator/etc:/etc/trino
+    networks:
+      - big_data_network
+    depends_on:
+      - createspoolingbucket
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+
+  trino-worker:
+    image: trinodb/trino:474
+    hostname: "{{.Node.Hostname}}-{{.Node.ID}}-{{.Service.Name}}"
+    volumes:
+      - /bigDataPlatform/configs/trino/worker/etc:/etc/trino
+    networks:
+      - big_data_network
+    depends_on:
+      -  trino-coordinator
+    deploy:
+      mode: replicated
+      replicas: 2
+      placement:
+        constraints:
+          - node.role != manager
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  superset:
+    hostname: superset
+    image: 127.0.0.1:5001/custom-superset:latest
+    ports:
+      - "8089:9777"
+    environment:
+      - SUPERSET_PORT=9777
+      # User configs
+      - ADMIN_USERNAME=novo_admin
+      - ADMIN_FIRSTNAME=Superset
+      - ADMIN_LASTNAME=Admin
+      - ADMIN_EMAIL=admin@superset.com
+      - ADMIN_PASSWORD=admin
+      # other configs
+      - LOAD_EXAMPLES=true
+    networks:
+      - big_data_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9777/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    volumes:
+      - superset_home:/app/superset_home
+    deploy:
+      mode: replicated
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+      placement:
+        constraints:
+          - node.role == manager
+
+networks:
+  big_data_network:
+    driver: overlay
+    attachable: true
+
+volumes:
+  minio_data:
+    driver: local
+  postgresql_data:
+    driver: local
+  hive_metastore_db:
+    driver: local
+  airflow_scheduler_data:
+    driver: local
+  airflow_webserver_data:
+    driver: local
+  airflow_worker_data:
+    driver: local
+  spark_history_logs:
+    driver: local
+  s3data:
+    driver: local
+  superset_home:
+    driver: local

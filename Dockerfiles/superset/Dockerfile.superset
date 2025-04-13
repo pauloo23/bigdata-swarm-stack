@@ -1,0 +1,20 @@
+FROM apache/superset
+
+USER root
+COPY ./docker-init.sh /docker-init.sh
+COPY ./superset_config.py /app/superset_config.py
+RUN chmod +x /docker-init.sh
+
+RUN pip install trino pillow pyhive
+ENV SUPERSET_CONFIG_PATH=/app/superset_config.py
+
+# Configurações padrão do usuário admin (serão sobrescritas pelo docker-compose)
+ENV ADMIN_USERNAME=admin \
+    ADMIN_FIRSTNAME=Superset \
+    ADMIN_LASTNAME=Admin \
+    ADMIN_EMAIL=admin@superset.com \
+    ADMIN_PASSWORD=admin \
+    LOAD_EXAMPLES=true
+
+USER superset
+ENTRYPOINT ["/docker-init.sh"]
