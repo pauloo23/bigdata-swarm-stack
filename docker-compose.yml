@@ -174,7 +174,7 @@ services:
       - PYSPARK_DRIVER_PYTHON=/usr/bin/python3
       - AWS_ACCESS_KEY_ID=minioadmin
       - AWS_SECRET_ACCESS_KEY=minioadmin
-      - AWS_ENDPOINT_URL=http://minio-ingress:9000
+      - AWS_ENDPOINT_URL=http://minio:9000
     volumes:
       - ./notebooks:/home/jovyan/work
     depends_on:
