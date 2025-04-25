@@ -401,7 +401,7 @@ services:
     environment:
       - SUPERSET_PORT=9777
       # User configs
-      - ADMIN_USERNAME=novo_admin
+      - ADMIN_USERNAME=admin
       - ADMIN_FIRSTNAME=Superset
       - ADMIN_LASTNAME=Admin
       - ADMIN_EMAIL=admin@superset.com
