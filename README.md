@@ -1,5 +1,6 @@
 # Big Data Platform on Docker Swarm
 
+![Platform Architecture](./images/BigDataPlatformArchitecture.png)
 This repository facilitates the deployment of a comprehensive and scalable big data platform orchestrated entirely within Docker Swarm. It provides a ready-to-use environment for data engineers and enthusiasts looking to manage, process, analyze, and visualize data using a collection of industry-standard open-source tools.
 
 **Project Explanation**
@@ -28,7 +29,11 @@ This project includes a practical example demonstrating a simple ETL (Extract, T
 
 **For a comprehensive, step-by-step guide on deploying and utilizing this data platform, please refer to the full article on Medium:**
 
-[**[Insert Link to Your Medium Article Here]**](YOUR_MEDIUM_ARTICLE_LINK_HERE)
+[![Read the full article on Medium](https://cdn-icons-png.flaticon.com/128/2111/2111505.png)](https://medium.com/@paulobarbosaa23/build-a-modern-scalable-and-distributed-big-data-platform-807eb422e5c3)
+**[Read the full article on Medium](https://medium.com/@paulobarbosaa23/build-a-modern-scalable-and-distributed-big-data-platform-807eb422e5c3)**
+
+<br>
+<br>
 
 **Author**
 
