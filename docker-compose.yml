@@ -174,7 +174,7 @@ services:
       - PYSPARK_DRIVER_PYTHON=/usr/bin/python3
       - AWS_ACCESS_KEY_ID=minioadmin
       - AWS_SECRET_ACCESS_KEY=minioadmin
-      - AWS_ENDPOINT_URL=http://minio-ingress:9000
+      - AWS_ENDPOINT_URL=http://minio:9000
     volumes:
       - ./notebooks:/home/jovyan/work
     depends_on:
@@ -401,7 +401,7 @@ services:
     environment:
       - SUPERSET_PORT=9777
       # User configs
-      - ADMIN_USERNAME=novo_admin
+      - ADMIN_USERNAME=admin
       - ADMIN_FIRSTNAME=Superset
       - ADMIN_LASTNAME=Admin
       - ADMIN_EMAIL=admin@superset.com
